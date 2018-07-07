@@ -1,3 +1,18 @@
+0.2.0
+=====
+
+New Features
+------------
+
+- Updated to WebRTC M57 (using [libwebrtc](https://github.com/markandrus/libwebrtc))
+
+Breaking Changes
+----------------
+
+- Minimum g++ version bumped to 5
+- Minimum macOS version bumped to 10.12
+- Minimum Microsoft Visual Studio version bumped to 2017
+
 0.1.6
 =====
 
