@@ -4,11 +4,12 @@
 New Features
 ------------
 
-- Updated to WebRTC M57 (using [libwebrtc](https://github.com/markandrus/libwebrtc))
+- Updated to WebRTC M68 (using [libwebrtc](https://github.com/markandrus/libwebrtc))
 
 Breaking Changes
 ----------------
 
+- Dropped support for Node 4, 5 and 7 (#408)
 - Minimum g++ version bumped to 5
 - Minimum macOS version bumped to 10.12
 - Minimum Microsoft Visual Studio version bumped to 2017
