@@ -8,12 +8,15 @@
 #ifndef SRC_SET_DESCRIPTION_DESCRIPTION_OBSERVER_H_
 #define SRC_SET_DESCRIPTION_DESCRIPTION_OBSERVER_H_
 
-#include <string>
+#include <webrtc/api/jsep.h>
 
-#include "webrtc/api/jsep.h"
+#include "src/events.h"  // IWYU pragma: keep
 
-#include "src/converters/v8.h"
-#include "src/events.h"
+namespace webrtc {
+
+class RTCError;
+
+}  // namespace webrtc
 
 namespace node_webrtc {
 
@@ -26,13 +29,13 @@ class SetSessionDescriptionObserver
   std::unique_ptr<node_webrtc::PromiseEvent<PeerConnection>> _promise;
 
  public:
-  explicit SetSessionDescriptionObserver(
+  SetSessionDescriptionObserver(
       PeerConnection* connection,
       std::unique_ptr<node_webrtc::PromiseEvent<PeerConnection>> promise)
     : parent(connection), _promise(std::move(promise)) {}
 
   virtual void OnSuccess();
-  virtual void OnFailure(const std::string& msg);
+  virtual void OnFailure(webrtc::RTCError);
 };
 
 }  // namespace node_webrtc

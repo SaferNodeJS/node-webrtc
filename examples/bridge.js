@@ -2,7 +2,7 @@
 'use strict';
 
 var express = require('express');
-var expressBrowserify = require('express-browserify');
+var browserify = require('browserify-middleware');
 var http = require('http');
 var join = require('path').join;
 var ws = require('ws');
@@ -32,7 +32,7 @@ var app = express();
 
 var server = http.createServer(app);
 
-app.get('/peer.js', expressBrowserify(join(__dirname, 'peer.js')));
+app.get('/peer.js', browserify(join(__dirname, 'peer.js')));
 
 app.use(express.static(__dirname));
 
@@ -76,6 +76,9 @@ wss.on('connection', function(ws) {
   }
 
   function doSendAnswer() {
+    if (ws.readyState !== ws.OPEN) {
+      return;
+    }
     ws.send(JSON.stringify(answer));
     console.log('awaiting data channels');
   }
@@ -150,6 +153,9 @@ wss.on('connection', function(ws) {
         console.info('ice gathering state change:', state);
       };
       pc.onicecandidate = function(candidate) {
+        if (ws.readyState !== ws.OPEN) {
+          return;
+        }
         ws.send(JSON.stringify({
           type: 'ice',
           sdp: {
@@ -169,6 +175,12 @@ wss.on('connection', function(ws) {
       } else {
         pendingCandidates.push(data);
       }
+    }
+  });
+
+  ws.on('close', function() {
+    if (pc) {
+      pc.close();
     }
   });
 });

@@ -5,15 +5,22 @@
  * project authors may be found in the AUTHORS file in the root of the source
  * tree.
  */
-#include "peerconnectionfactory.h"
+#include "src/peerconnectionfactory.h"
 
-#include "webrtc/base/ssladapter.h"
-#include "webrtc/modules/audio_device/include/fake_audio_device.h"
-#include "webrtc/p2p/base/basicpacketsocketfactory.h"
+#include <uv.h>
+#include <webrtc/api/peerconnectioninterface.h>  // IWYU pragma: keep
+#include <webrtc/api/audio_codecs/builtin_audio_decoder_factory.h>  // IWYU pragma: keep
+#include <webrtc/api/audio_codecs/builtin_audio_encoder_factory.h>  // IWYU pragma: keep
+#include <webrtc/modules/audio_device/include/audio_device.h>
+#include <webrtc/modules/audio_device/include/fake_audio_device.h>  // IWYU pragma: keep
+#include <webrtc/p2p/base/basicpacketsocketfactory.h>  // IWYU pragma: keep
+#include <webrtc/rtc_base/location.h>
+#include <webrtc/rtc_base/ssladapter.h>
+#include <webrtc/rtc_base/thread.h>  // IWYU pragma: keep
 
 #include "src/common.h"
-#include "src/zerocapturer.h"
-#include "src/webrtc/fake_audio_device.h"
+#include "src/zerocapturer.h"  // IWYU pragma: keep
+#include "src/webrtc/fake_audio_device.h"  // IWYU pragma: keep
 
 using node_webrtc::Maybe;
 using node_webrtc::PeerConnectionFactory;
@@ -31,7 +38,11 @@ using v8::Value;
 using v8::Array;
 using webrtc::AudioDeviceModule;
 
-Nan::Persistent<Function> PeerConnectionFactory::constructor;
+Nan::Persistent<Function>& PeerConnectionFactory::constructor() {
+  static Nan::Persistent<Function> constructor;
+  return constructor;
+}
+
 std::shared_ptr<PeerConnectionFactory> PeerConnectionFactory::_default;
 uv_mutex_t PeerConnectionFactory::_lock;
 int PeerConnectionFactory::_references = 0;
@@ -42,28 +53,21 @@ PeerConnectionFactory::PeerConnectionFactory(Maybe<AudioDeviceModule::AudioLayer
   bool result;
   (void) result;
 
-#if defined(WEBRTC_USE_EPOLL)
-  _physicalSocketServer = std::unique_ptr<node_webrtc::PhysicalSocketServer>(new PhysicalSocketServer());
-  assert(_physicalSocketServer);
-
-  _workerThread = std::unique_ptr<rtc::Thread>(new rtc::Thread(_physicalSocketServer.get()));
-#else
   _workerThread = std::unique_ptr<rtc::Thread>(new rtc::Thread());
-#endif
   assert(_workerThread);
 
   result = _workerThread->Start();
   assert(result);
 
-  auto audioDeviceModule = _workerThread->Invoke<AudioDeviceModule*>(RTC_FROM_HERE, [audioLayer]() {
+  _audioDeviceModule = _workerThread->Invoke<rtc::scoped_refptr<AudioDeviceModule>>(RTC_FROM_HERE, [audioLayer]() {
 #if defined(WEBRTC_WIN)
     return webrtc::AudioDeviceModule::Create(0,
-            audioLayer.FromMaybe(webrtc::AudioDeviceModule::AudioLayer::kDummyAudio)).release();
+            audioLayer.FromMaybe(webrtc::AudioDeviceModule::AudioLayer::kDummyAudio));
 #else
     return audioLayer.Map([](const webrtc::AudioDeviceModule::AudioLayer audioLayer) {
-      return webrtc::AudioDeviceModule::Create(0, audioLayer).release();
+      return webrtc::AudioDeviceModule::Create(0, audioLayer);
     }).Or([]() {
-      return new node_webrtc::FakeAudioDevice(
+      return node_webrtc::FakeAudioDevice::Create(
               node_webrtc::ZeroCapturer::Create(48000),
               node_webrtc::FakeAudioDevice::CreateDiscardRenderer(48000));
     });
@@ -79,7 +83,9 @@ PeerConnectionFactory::PeerConnectionFactory(Maybe<AudioDeviceModule::AudioLayer
   _factory = webrtc::CreatePeerConnectionFactory(
           _workerThread.get(),
           _signalingThread.get(),
-          audioDeviceModule,
+          _audioDeviceModule.get(),
+          webrtc::CreateBuiltinAudioEncoderFactory(),
+          webrtc::CreateBuiltinAudioDecoderFactory(),
           nullptr,
           nullptr);
   assert(_factory);
@@ -94,6 +100,10 @@ PeerConnectionFactory::~PeerConnectionFactory() {
   TRACE_CALL;
 
   _factory = nullptr;
+
+  _workerThread->Invoke<void>(RTC_FROM_HERE, [this]() {
+    this->_audioDeviceModule = nullptr;
+  });
 
   _workerThread->Stop();
   _signalingThread->Stop();
@@ -159,6 +169,6 @@ void PeerConnectionFactory::Init(Handle<Object> exports) {
   tpl->SetClassName(Nan::New("PeerConnectionFactory").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-  constructor.Reset(tpl->GetFunction());
+  constructor().Reset(tpl->GetFunction());
   exports->Set(Nan::New("PeerConnectionFactory").ToLocalChecked(), tpl->GetFunction());
 }

@@ -8,48 +8,69 @@
 #ifndef SRC_DATACHANNEL_H_
 #define SRC_DATACHANNEL_H_
 
-#include <string.h>
+#include <iosfwd>
+#include <memory>
 
-#include <string>
-#include <queue>
+#include <nan.h>
+#include <webrtc/api/datachannelinterface.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
 
-#include "nan.h"
-#include "uv.h"
-#include "v8.h"  // IWYU pragma: keep
-
-#include "webrtc/api/datachannelinterface.h"
-#include "webrtc/base/buffer.h"
-#include "webrtc/base/scoped_ref_ptr.h"
-
-#include "asyncobjectwrapwithloop.h"
-#include "converters/webrtc.h"
-#include "eventqueue.h"
-#include "events.h"
-#include "peerconnectionfactory.h"
+#include "src/asyncobjectwrapwithloop.h"  // IWYU pragma: keep
+#include "src/converters/webrtc.h"
+#include "src/eventqueue.h"  // IWYU pragma: keep
+#include "src/wrap.h"
 
 namespace node_webrtc {
 
 class DataChannelObserver;
+class DataChannelStateChangeEvent;
+class MessageEvent;
+class PeerConnectionFactory;
+
+template <typename T> class ErrorEvent;
 
 class DataChannel
   : public node_webrtc::AsyncObjectWrapWithLoop<DataChannel>
   , public webrtc::DataChannelObserver {
   friend class node_webrtc::DataChannelObserver;
  public:
-  explicit DataChannel(node_webrtc::DataChannelObserver* observer);
+  DataChannel() = delete;
+
+  DataChannel(DataChannel const&) = delete;
+
+  DataChannel& operator=(DataChannel const&) = delete;
+
+  ~DataChannel() override;
+
+  static void Init(v8::Handle<v8::Object> exports);
 
   //
   // DataChannelObserver implementation.
   //
+  void OnStateChange() override;
+  void OnMessage(const webrtc::DataBuffer& buffer) override;
 
-  virtual void OnStateChange() override;
-  virtual void OnMessage(const webrtc::DataBuffer& buffer) override;
+  void HandleErrorEvent(const ErrorEvent<DataChannel>& event);
+  void HandleStateEvent(const DataChannelStateChangeEvent& event);
+  void HandleMessageEvent(MessageEvent& event);
 
-  //
-  // Nodejs wrapping.
-  //
-  static void Init(v8::Handle<v8::Object> exports);
-  static Nan::Persistent<v8::Function> constructor;
+  void OnPeerConnectionClosed();
+
+  static ::node_webrtc::Wrap <
+  DataChannel*,
+  rtc::scoped_refptr<webrtc::DataChannelInterface>,
+  node_webrtc::DataChannelObserver*
+  > * wrap();
+
+ private:
+  explicit DataChannel(node_webrtc::DataChannelObserver* observer);
+
+  static DataChannel* Create(
+      node_webrtc::DataChannelObserver*,
+      rtc::scoped_refptr<webrtc::DataChannelInterface>);
+
+  static Nan::Persistent<v8::Function>& constructor();
+
   static NAN_METHOD(New);
 
   static NAN_METHOD(Send);
@@ -67,17 +88,13 @@ class DataChannel
   static NAN_SETTER(SetBinaryType);
   static NAN_SETTER(ReadOnly);
 
-  void HandleErrorEvent(const ErrorEvent<DataChannel>& event);
-  void HandleStateEvent(const DataChannelStateChangeEvent& event);
-  void HandleMessageEvent(MessageEvent& event);
-
- private:
   node_webrtc::BinaryType _binaryType;
   int _cached_id;
   std::string _cached_label;
   uint16_t _cached_max_retransmits;
   bool _cached_ordered;
   std::string _cached_protocol;
+  uint64_t _cached_buffered_amount;
   std::shared_ptr<node_webrtc::PeerConnectionFactory> _factory;
   rtc::scoped_refptr<webrtc::DataChannelInterface> _jingleDataChannel;
 };
@@ -90,8 +107,10 @@ class DataChannelObserver
   explicit DataChannelObserver(std::shared_ptr<node_webrtc::PeerConnectionFactory> factory,
       rtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel);
 
-  virtual void OnStateChange();
-  virtual void OnMessage(const webrtc::DataBuffer& buffer);
+  void OnStateChange() override;
+  void OnMessage(const webrtc::DataBuffer& buffer) override;
+
+  rtc::scoped_refptr<webrtc::DataChannelInterface> channel() { return _jingleDataChannel; }
 
  private:
   std::shared_ptr<node_webrtc::PeerConnectionFactory> _factory;

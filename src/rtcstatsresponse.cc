@@ -5,12 +5,13 @@
  * project authors may be found in the AUTHORS file in the root of the source
  * tree.
  */
-#include "rtcstatsresponse.h"
+#include "src/rtcstatsresponse.h"
 
-#include <vector>
+#include <nan.h>
+#include <v8.h>  // IWYU pragma: keep
 
-#include "common.h"
-#include "rtcstatsreport.h"
+#include "src/common.h"
+#include "src/legacyrtcstatsreport.h"  // IWYU pragma: keep
 
 using node_webrtc::RTCStatsResponse;
 using v8::Array;
@@ -22,7 +23,10 @@ using v8::Local;
 using v8::Object;
 using v8::Value;
 
-Nan::Persistent<Function> RTCStatsResponse::constructor;
+Nan::Persistent<Function>& RTCStatsResponse::constructor() {
+  static Nan::Persistent<Function> constructor;
+  return constructor;
+}
 
 NAN_METHOD(RTCStatsResponse::New) {
   TRACE_CALL;
@@ -49,15 +53,24 @@ NAN_METHOD(RTCStatsResponse::result) {
   auto reports = Nan::New<Array>(self->_reports.size());
 
   uint32_t i = 0;
-  for (auto report : self->_reports) {
-    Local<Value> cargv[2];
-    cargv[0] = Nan::New<External>(static_cast<void*>(&timestamp));
-    cargv[1] = Nan::New<External>(static_cast<void*>(&report));
-    reports->Set(i++, Nan::NewInstance(Nan::New(RTCStatsReport::constructor), 2, cargv).ToLocalChecked());
+  for (auto const& stats : self->_reports) {
+    auto report = LegacyStatsReport::Create(timestamp, stats);
+    reports->Set(i++, report->handle());
   }
 
   TRACE_END;
   info.GetReturnValue().Set(reports);
+}
+
+RTCStatsResponse* RTCStatsResponse::Create(
+    double timestamp,
+    const std::vector<std::map<std::string, std::string>>& reports) {
+  Nan::HandleScope scope;
+  Local<Value> cargv[2];
+  cargv[0] = Nan::New<External>(static_cast<void*>(&timestamp));
+  cargv[1] = Nan::New<External>(const_cast<void*>(static_cast<const void*>(&reports)));
+  auto response = Nan::NewInstance(Nan::New(RTCStatsResponse::constructor()), 2, cargv).ToLocalChecked();
+  return Nan::ObjectWrap::Unwrap<RTCStatsResponse>(response);
 }
 
 void RTCStatsResponse::Init(Handle<Object> exports) {
@@ -65,6 +78,6 @@ void RTCStatsResponse::Init(Handle<Object> exports) {
   tpl->SetClassName(Nan::New("RTCStatsResponse").ToLocalChecked());
   tpl->InstanceTemplate()->SetInternalFieldCount(1);
   Nan::SetPrototypeMethod(tpl, "result", result);
-  constructor.Reset(tpl->GetFunction());
+  constructor().Reset(tpl->GetFunction());
   exports->Set(Nan::New("RTCStatsResponse").ToLocalChecked(), tpl->GetFunction());
 }

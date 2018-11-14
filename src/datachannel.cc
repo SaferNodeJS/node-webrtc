@@ -5,20 +5,25 @@
  * project authors may be found in the AUTHORS file in the root of the source
  * tree.
  */
-#include "datachannel.h"
+#include "src/datachannel.h"
 
-#include <stdint.h>
+#include <webrtc/api/datachannelinterface.h>
+#include <webrtc/rtc_base/copyonwritebuffer.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
+#include <v8.h>
 
-#include "common.h"
-#include "converters.h"
-#include "converters/webrtc.h"
-#include "error.h"
+#include "src/common.h"
+#include "src/converters/webrtc.h"
+#include "src/error.h"
+#include "src/errorfactory.h"  // IWYU pragma: keep
+#include "src/events.h"
 
 using node_webrtc::AsyncObjectWrapWithLoop;
 using node_webrtc::DataChannel;
 using node_webrtc::DataChannelObserver;
 using node_webrtc::DataChannelStateChangeEvent;
 using node_webrtc::ErrorEvent;
+using node_webrtc::ErrorFactory;
 using node_webrtc::Event;
 using node_webrtc::MessageEvent;
 using node_webrtc::StateEvent;
@@ -33,7 +38,10 @@ using v8::Object;
 using v8::String;
 using v8::Value;
 
-Nan::Persistent<Function> DataChannel::constructor;
+Nan::Persistent<Function>& DataChannel::constructor() {
+  static Nan::Persistent<Function> constructor;
+  return constructor;
+}
 
 DataChannelObserver::DataChannelObserver(std::shared_ptr<node_webrtc::PeerConnectionFactory> factory,
     rtc::scoped_refptr<webrtc::DataChannelInterface> jingleDataChannel)
@@ -57,7 +65,7 @@ void DataChannelObserver::OnMessage(const webrtc::DataBuffer& buffer) {
   TRACE_END;
 }
 
-void requeue(DataChannelObserver& observer, DataChannel& channel) {
+static void requeue(DataChannelObserver& observer, DataChannel& channel) {
   while (auto event = observer.Dequeue()) {
     channel.Dispatch(std::move(event));
   }
@@ -74,6 +82,24 @@ DataChannel::DataChannel(node_webrtc::DataChannelObserver* observer)
   requeue(*observer, *this);
 
   delete observer;
+}
+
+DataChannel::~DataChannel() {
+  wrap()->Release(this);
+}
+
+void DataChannel::OnPeerConnectionClosed() {
+  if (_jingleDataChannel != nullptr) {
+    _jingleDataChannel->UnregisterObserver();
+    _cached_id = _jingleDataChannel->id();
+    _cached_label = _jingleDataChannel->label();
+    _cached_max_retransmits = _jingleDataChannel->maxRetransmits();
+    _cached_ordered = _jingleDataChannel->ordered();
+    _cached_protocol = _jingleDataChannel->protocol();
+    _cached_buffered_amount = _jingleDataChannel->buffered_amount();
+    _jingleDataChannel = nullptr;
+    Stop();
+  }
 }
 
 NAN_METHOD(DataChannel::New) {
@@ -108,11 +134,12 @@ void DataChannel::HandleStateEvent(const DataChannelStateChangeEvent& event) {
   Local<Value> argv[1];
   if (event.state == webrtc::DataChannelInterface::kClosed) {
     argv[0] = Nan::New("closed").ToLocalChecked();
-  } else {
+    MakeCallback("onstatechange", 1, argv);
+  } else if (event.state == webrtc::DataChannelInterface::kOpen) {
     argv[0] = Nan::New("open").ToLocalChecked();
+    MakeCallback("onstatechange", 1, argv);
   }
 
-  MakeCallback("onstatechange", 1, argv);
   if (event.state == webrtc::DataChannelInterface::kClosed) {
     Stop();
   }
@@ -149,6 +176,7 @@ void DataChannel::OnStateChange() {
     _cached_max_retransmits = _jingleDataChannel->maxRetransmits();
     _cached_ordered = _jingleDataChannel->ordered();
     _cached_protocol = _jingleDataChannel->protocol();
+    _cached_buffered_amount = _jingleDataChannel->buffered_amount();
     _jingleDataChannel = nullptr;
   }
   TRACE_END;
@@ -168,7 +196,7 @@ NAN_METHOD(DataChannel::Send) {
   if (self->_jingleDataChannel != nullptr) {
     if (self->_jingleDataChannel->state() != webrtc::DataChannelInterface::DataState::kOpen) {
       TRACE_END;
-      return Nan::ThrowError("InvalidStateError");
+      return Nan::ThrowError(ErrorFactory::CreateInvalidStateError("RTCDataChannel.readyState is not 'open'"));
     }
     if (info[0]->IsString()) {
       Local<String> str = Local<String>::Cast(info[0]);
@@ -202,6 +230,9 @@ NAN_METHOD(DataChannel::Send) {
       webrtc::DataBuffer data_buffer(buffer, true);
       self->_jingleDataChannel->Send(data_buffer);
     }
+  } else {
+    TRACE_END;
+    return Nan::ThrowError(ErrorFactory::CreateInvalidStateError("RTCDataChannel.readyState is not 'open'"));
   }
 
   TRACE_END;
@@ -227,7 +258,7 @@ NAN_GETTER(DataChannel::GetBufferedAmount) {
 
   uint64_t buffered_amount = self->_jingleDataChannel != nullptr
       ? self->_jingleDataChannel->buffered_amount()
-      : 0;
+      : self->_cached_buffered_amount;
 
   TRACE_END;
   info.GetReturnValue().Set(Nan::New<Number>(buffered_amount));
@@ -359,6 +390,28 @@ NAN_SETTER(DataChannel::ReadOnly) {
   INFO("PeerConnection::ReadOnly");
 }
 
+node_webrtc::Wrap <
+DataChannel*,
+rtc::scoped_refptr<webrtc::DataChannelInterface>,
+node_webrtc::DataChannelObserver*
+> * DataChannel::wrap() {
+  static auto wrap = new node_webrtc::Wrap <
+  DataChannel*,
+  rtc::scoped_refptr<webrtc::DataChannelInterface>,
+  node_webrtc::DataChannelObserver*
+  > (node_webrtc::DataChannel::Create);
+  return wrap;
+}
+
+DataChannel* DataChannel::Create(
+    node_webrtc::DataChannelObserver* observer,
+    rtc::scoped_refptr<webrtc::DataChannelInterface>) {
+  Nan::HandleScope scope;
+  Local<Value> cargv = Nan::New<External>(static_cast<void*>(observer));
+  auto channel = Nan::NewInstance(Nan::New(DataChannel::constructor()), 1, &cargv).ToLocalChecked();
+  return AsyncObjectWrapWithLoop<DataChannel>::Unwrap(channel);
+}
+
 void DataChannel::Init(Handle<Object> exports) {
   Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(New);
   tpl->SetClassName(Nan::New("DataChannel").ToLocalChecked());
@@ -377,6 +430,6 @@ void DataChannel::Init(Handle<Object> exports) {
   Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("binaryType").ToLocalChecked(), GetBinaryType, SetBinaryType);
   Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("readyState").ToLocalChecked(), GetReadyState, ReadOnly);
 
-  constructor.Reset(tpl->GetFunction());
+  constructor().Reset(tpl->GetFunction());
   exports->Set(Nan::New("DataChannel").ToLocalChecked(), tpl->GetFunction());
 }

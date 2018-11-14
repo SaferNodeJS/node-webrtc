@@ -8,26 +8,50 @@
 #ifndef SRC_RTCRTPSENDER_H_
 #define SRC_RTCRTPSENDER_H_
 
-#include "nan.h"
-#include "v8.h"
+#include <memory>
+
+#include <nan.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
+#include <v8.h>  // IWYU pragma: keep
 
 #include "src/asyncobjectwrap.h"
-#include "src/peerconnectionfactory.h"
-#include "src/mediastreamtrack.h"
+#include "src/wrap.h"
+
+namespace webrtc {
+
+class RtpSenderInterface;
+
+}  // namespace webrtc
 
 namespace node_webrtc {
 
+class PeerConnectionFactory;
+
 class RTCRtpSender: public node_webrtc::AsyncObjectWrap {
  public:
-  RTCRtpSender(
-      std::shared_ptr<node_webrtc::PeerConnectionFactory>&& factory,
-      rtc::scoped_refptr<webrtc::RtpSenderInterface>&& sender,
-      node_webrtc::MediaStreamTrack* track);
-
   ~RTCRtpSender() override;
 
   static void Init(v8::Handle<v8::Object> exports);
-  static Nan::Persistent<v8::Function> constructor;
+
+  rtc::scoped_refptr<webrtc::RtpSenderInterface> sender() { return _sender; }
+
+  static ::node_webrtc::Wrap <
+  RTCRtpSender*,
+  rtc::scoped_refptr<webrtc::RtpSenderInterface>,
+  std::shared_ptr<PeerConnectionFactory>
+  > * wrap();
+
+ private:
+  RTCRtpSender(
+      std::shared_ptr<node_webrtc::PeerConnectionFactory>&& factory,
+      rtc::scoped_refptr<webrtc::RtpSenderInterface>&& sender);
+
+  static RTCRtpSender* Create(
+      std::shared_ptr<PeerConnectionFactory>,
+      rtc::scoped_refptr<webrtc::RtpSenderInterface>);
+
+  static Nan::Persistent<v8::Function>& constructor();
+
   static NAN_METHOD(New);
 
   static NAN_GETTER(GetTrack);
@@ -41,12 +65,8 @@ class RTCRtpSender: public node_webrtc::AsyncObjectWrap {
   static NAN_METHOD(GetStats);
   static NAN_METHOD(ReplaceTrack);
 
-  rtc::scoped_refptr<webrtc::RtpSenderInterface> sender() { return _sender; }
-
- private:
   const std::shared_ptr<node_webrtc::PeerConnectionFactory> _factory;
   const rtc::scoped_refptr<webrtc::RtpSenderInterface> _sender;
-  node_webrtc::MediaStreamTrack* _track;
 };
 
 }  // namespace node_webrtc

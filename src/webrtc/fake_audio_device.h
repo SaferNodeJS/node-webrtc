@@ -7,24 +7,26 @@
  *  in the file PATENTS.  All contributing project authors may
  *  be found in the AUTHORS file in the root of the source tree.
  */
-#ifndef WEBRTC_TEST_FAKE_AUDIO_DEVICE_H_
-#define WEBRTC_TEST_FAKE_AUDIO_DEVICE_H_
+#ifndef SRC_WEBRTC_FAKE_AUDIO_DEVICE_H_
+#define SRC_WEBRTC_FAKE_AUDIO_DEVICE_H_
 
-#include <memory>
-#include <string>
-#include <vector>
+// #include <memory>
+// #include <string>
+#include <vector>  // IWYU pragma: keep
 
-#include "webrtc/base/array_view.h"
-#include "webrtc/base/buffer.h"
-#include "webrtc/base/criticalsection.h"
-#include "webrtc/base/event.h"
-#include "webrtc/base/platform_thread.h"
-#include "webrtc/modules/audio_device/include/fake_audio_device.h"
-#include "webrtc/typedefs.h"
+// #include <webrtc/api/array_view.h>
+#include <webrtc/modules/audio_device/include/fake_audio_device.h>
+#include <webrtc/rtc_base/buffer.h>  // IWYU pragma: keep
+#include <webrtc/rtc_base/criticalsection.h>
+#include <webrtc/rtc_base/event.h>
+#include <webrtc/rtc_base/platform_thread.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
+#include <webrtc/rtc_base/thread_annotations.h>
 
 namespace webrtc {
 
-class EventTimerWrapper;
+class AudioTransport;
+class EventTimerWrapper;  // IWYU pragma: keep
 
 }  // namespace webrtc
 
@@ -68,10 +70,10 @@ class FakeAudioDevice : public webrtc::FakeAudioDeviceModule {
   // |renderer| is an object that receives audio data that would have been
   // played out. Can be nullptr if this device is never used for playing.
   // Use one of the Create... functions to get these instances.
-  FakeAudioDevice(std::unique_ptr<Capturer> capturer,
+
+  static rtc::scoped_refptr<FakeAudioDevice> Create(std::unique_ptr<Capturer> capturer,
       std::unique_ptr<Renderer> renderer,
       float speed = 1);
-  ~FakeAudioDevice() override;
 
   // Returns a Capturer instance that generates a signal where every second
   // frame is zero and every second frame is evenly distributed random noise
@@ -102,6 +104,7 @@ class FakeAudioDevice : public webrtc::FakeAudioDeviceModule {
       int sampling_frequency_in_hz);
 
   int32_t Init() override;
+  int32_t Terminate() override;
   int32_t RegisterAudioCallback(webrtc::AudioTransport* callback) override;
 
   int32_t StartPlayout() override;
@@ -119,23 +122,29 @@ class FakeAudioDevice : public webrtc::FakeAudioDeviceModule {
   // Returns false if |timeout_ms| passes before that happens.
   bool WaitForRecordingEnd(int timeout_ms = rtc::Event::kForever);
 
+ protected:
+  FakeAudioDevice(std::unique_ptr<Capturer> capturer,
+      std::unique_ptr<Renderer> renderer,
+      float speed);
+  ~FakeAudioDevice() override;
+
  private:
   static bool Run(void* obj);
   void ProcessAudio();
 
-  const std::unique_ptr<Capturer> capturer_ GUARDED_BY(lock_);
-  const std::unique_ptr<Renderer> renderer_ GUARDED_BY(lock_);
+  const std::unique_ptr<Capturer> capturer_ RTC_GUARDED_BY(lock_);
+  const std::unique_ptr<Renderer> renderer_ RTC_GUARDED_BY(lock_);
   const float speed_;
 
   rtc::CriticalSection lock_;
-  webrtc::AudioTransport* audio_callback_ GUARDED_BY(lock_);
-  bool rendering_ GUARDED_BY(lock_);
-  bool capturing_ GUARDED_BY(lock_);
+  webrtc::AudioTransport* audio_callback_ RTC_GUARDED_BY(lock_);
+  bool rendering_ RTC_GUARDED_BY(lock_);
+  bool capturing_ RTC_GUARDED_BY(lock_);
   rtc::Event done_rendering_;
   rtc::Event done_capturing_;
 
-  std::vector<int16_t> playout_buffer_ GUARDED_BY(lock_);
-  rtc::BufferT<int16_t> recording_buffer_ GUARDED_BY(lock_);
+  std::vector<int16_t> playout_buffer_ RTC_GUARDED_BY(lock_);
+  rtc::BufferT<int16_t> recording_buffer_ RTC_GUARDED_BY(lock_);
 
   std::unique_ptr<webrtc::EventTimerWrapper> tick_;
   rtc::PlatformThread thread_;
@@ -143,4 +152,4 @@ class FakeAudioDevice : public webrtc::FakeAudioDeviceModule {
 
 }  // namespace node_webrtc
 
-#endif  // WEBRTC_TEST_FAKE_AUDIO_DEVICE_H_
+#endif  // SRC_WEBRTC_FAKE_AUDIO_DEVICE_H_

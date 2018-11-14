@@ -1,3 +1,201 @@
+0.3.2
+=====
+
+New Features
+------------
+
+- Support for Node 11 on Windows.
+
+0.3.1
+=====
+
+This release adds a number of new features and brings us closer to
+spec-compliance, thanks to the tests at
+[web-platform-tests/wpt](http://github.com/web-platform-tests/wpt).
+
+New Features
+------------
+
+### `getUserMedia`
+
+This release adds limited `getUserMedia` support. You can create audio and video
+MediaStreamTracks; however, the resulting MediaStreamTracks do not capture any
+media. You can add these MediaStreamTracks to an RTCPeerConnection; however, no
+media will be transmitted. You can confirm by checking `bytesSent` and
+`bytesReceived` in `getStats`.
+
+```js
+const { getUserMedia } = require('wrtc');
+
+getUserMedia({
+  audio: true,
+  video: true
+}).then(stream => {
+  stream.getTracks().forEach(track => stop());
+});
+```
+
+Although we will parse and validate some members of the MediaStreamConstraints
+and related dictionaries, we do not use their values at this time.
+
+### `getStats`
+
+This release adds limited standards-compliant `getStats` support. Previous
+node-webrtc releases exposed the legacy, callback-based `getStats` API. This
+release preserves that API but adds the Promise-based API. Neither the
+MediaStreamTrack selector argument nor the RTCRtpSender- and
+RTCRtpReceiver-level `getStats` APIs are implemented at this time.
+
+```js
+// Legacy API
+pc.getStats(
+  response => { /* ... */ },
+  console.error
+);
+
+// Standards-compliant API
+pc.getStats().then(
+  report => { /* ... */ },
+  console.error
+);
+```
+
+### Unified Plan and `sdpSemantics`
+
+This release adds support for RTCRtpTransceivers and Unified Plan SDP via
+
+* A non-standard RTCConfiguration option, `sdpSemantics`, and
+* An environment variable, `SDP_SEMANTICS`.
+
+Construct an RTCPeerConnection with `sdpSemantics` set to "unified-plan" or
+launch your application with `SDP_SEMANTICS=unified-plan` to enable
+RTCRtpTransceiver support; otherwise, "plan-b" is the default.
+
+```js
+const { RTCPeerConnection } = require('wrtc');
+
+const pc = new RTCPeerConnection({
+  sdpSemantics: 'unified-plan'  // default is "plan-b"
+});
+```
+
+```
+SDP_SEMANTICS=unified-plan node app.js
+```
+
+### RTCRtpTransceiver
+
+You can use RTCRtpTransceivers and related APIs when Unified Plan is enabled.
+This includes the following RTCPeerConnection methods
+
+- `addTransceiver`
+- `getTransceivers`
+
+and the following RTCTrackEvent properties
+
+- `transceiver`
+
+The following RTCRtpTransceiver methods are supported
+
+- `stop`
+
+as well as the following RTCRtpTransceiver properties
+
+- `mid`
+- `sender`
+- `receiver`
+- `stopped`
+- `direction`
+- `currentDirection`
+
+`setCodecPreferences` is not yet implemented. When calling `addTransceiver`,
+only the following RTCRtpTransceiverInit dictionary members are supported
+
+- `direction`
+- `streams`
+
+```js
+const assert = require('assert');
+const { MediaStream, RTCPeerConnection, RTCRtpTransceiver } = require('wrtc');
+
+const pc = new RTCPeerConnection({
+  sdpSemantics: 'unified-plan'
+});
+
+const t1 = pc.addTransceiver('audio', {
+  direction: 'recvonly'
+});
+
+const t2 = pc.addTransceiver(t1.receiver.track, {
+  direction: 'sendonly',
+  streams: [new MediaStream()]
+});
+```
+
+### MediaStreamTrack
+
+Added limited support for the `muted` property (it always returns `false`).
+
+### Miscellaneous
+
+- APIs that should throw DOMExceptions, such as `addTrack`, will use
+  [domexception](https://github.com/jsdom/domexception) to construct those
+  DOMExceptions, if installed.
+
+Bug Fixes
+---------
+
+- Calling `addTrack` twice with the same MediaStreamTrack should throw an
+  InvalidAccessError (#442).
+- MediaStream's `getTrackById` did not work for video MediaStreamTracks.
+- MediaStream's `clone` method did not `clone` MediaStreamTracks.
+- MediaStreamTrack's `readyState` was not updated when `stop` was called.
+
+0.3.0
+=====
+
+New Features
+------------
+
+- Support for Node 11. Binaries are available for Linux and macOS. Windows
+  binaries will become available in a subsequent release once AppVeyor gains
+  support for Node 11.
+- Updated to WebRTC M70. This release no longer uses
+  [mayeut/libwebrtc](https://github.com/mayeut/libwebrtc); instead, WebRTC is
+  built from source.
+
+Breaking Changes
+----------------
+
+- Dropped support for Node 9
+- Minimum CMake version bumped to 3.12
+- Minimum GCC version bumped to 5.4
+- Minimum Microsoft Visual Studio version bumped to 2017
+
+Bug Fixes
+---------
+
+- Updating to WebRTC M70 fixes an RTCDataChannel-related interop bug with recent
+  Firefox releases (#444).
+
+0.2.2
+=====
+
+Bug Fixes
+---------
+
+- Destroy AudioDeviceModule on the worker thread.
+
+0.2.1
+=====
+
+Bug Fixes
+---------
+
+- Fixed an AudioDeviceModule memory and thread leak (#429).
+- Fixed an issue where closing an RTCPeerConnection would raise "open" events on
+  any RTCDataChannels whose `readyState` was "connecting" (#436).
+
 0.2.0
 =====
 
@@ -5,6 +203,13 @@ Breaking Changes
 ----------------
 
 - Dropped support for Node 4, 5 and 7 (#408).
+
+Bug Fixes
+---------
+
+- Fixed a race when closing an RTCDataChannel (#358).
+- Fixed memory leaks in `createOffer`, `createAnswer`, `addIceCandidate`, and
+  `getStats` (#425).
 
 0.1.6
 =====

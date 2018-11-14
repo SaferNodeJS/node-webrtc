@@ -8,47 +8,46 @@
 #ifndef SRC_PEERCONNECTION_H_
 #define SRC_PEERCONNECTION_H_
 
-#include <stdint.h>
+#include <memory>
 
-#include <string>
-#include <queue>
+#include <nan.h>
+#include <webrtc/api/peerconnectioninterface.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
+#include <v8.h>  // IWYU pragma: keep
 
-#include "nan.h"
-#include "uv.h"
-#include "v8.h"  // IWYU pragma: keep
+#include "src/asyncobjectwrapwithloop.h"  // IWYU pragma: keep
+#include "src/converters/webrtc.h"
 
-#include "webrtc/api/datachannelinterface.h"  // IWYU pragma: keep
-#include "webrtc/api/jsep.h"
-#include "webrtc/api/peerconnectioninterface.h"
-#include "webrtc/api/statstypes.h"
-#include "webrtc/base/scoped_ref_ptr.h"
+namespace webrtc {
 
-#include "asyncobjectwrapwithloop.h"
-#include "converters/webrtc.h"
-#include "events.h"
-#include "peerconnectionfactory.h"
-#include "rtcrtpreceiver.h"
-#include "rtcrtpsender.h"
+class DataChannelInterface;
+class IceCandidateInterface;
+class MediaStreamInterface;
+class RtpReceiverInterface;
+class RtpTransceiverInterface;
+
+}  // namespace webrtc
 
 namespace node_webrtc {
 
-class CreateOfferObserver;
-class CreateAnswerObserver;
-class DataChannelObserver;
-class SetLocalDescriptionObserver;
-class SetRemoteDescriptionObserver;
+class IceConnectionStateChangeEvent;
+class IceEvent;
+class IceGatheringStateChangeEvent;
+class DataChannelEvent;
+class NegotiationNeededEvent;
+class OnAddTrackEvent;
+class PeerConnectionFactory;
+class SignalingStateChangeEvent;
 
 class PeerConnection
   : public node_webrtc::AsyncObjectWrapWithLoop<PeerConnection>
   , public webrtc::PeerConnectionObserver {
  public:
-  explicit PeerConnection(ExtendedRTCConfiguration configuration);
   ~PeerConnection() override;
 
   //
   // PeerConnectionObserver implementation.
   //
-
   void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState new_state) override;
   void OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState new_state) override;
   void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState new_state) override;
@@ -62,15 +61,32 @@ class PeerConnection
 
   void OnAddTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
       const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams) override;
+  void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override;
 
   //
   // Nodejs wrapping.
   //
   static void Init(v8::Handle<v8::Object> exports);
-  static Nan::Persistent<v8::Function> constructor;
+
+  void HandleIceConnectionStateChangeEvent(const IceConnectionStateChangeEvent& event);
+  void HandleIceGatheringStateChangeEvent(const IceGatheringStateChangeEvent& event);
+  void HandleIceCandidateEvent(const IceEvent& event);
+  void HandleDataChannelEvent(const DataChannelEvent& event);
+  void HandleNegotiationNeededEvent(const NegotiationNeededEvent& event);
+  void HandleOnAddTrackEvent(const OnAddTrackEvent& event);
+  void HandleSignalingStateChangeEvent(const SignalingStateChangeEvent& event);
+
+  void SaveLastSdp(const RTCSessionDescriptionInit& lastSdp);
+
+ private:
+  explicit PeerConnection(ExtendedRTCConfiguration configuration);
+
+  static Nan::Persistent<v8::Function>& constructor();
+
   static NAN_METHOD(New);
 
   static NAN_METHOD(AddTrack);
+  static NAN_METHOD(AddTransceiver);
   static NAN_METHOD(RemoveTrack);
   static NAN_METHOD(CreateOffer);
   static NAN_METHOD(CreateAnswer);
@@ -91,6 +107,8 @@ class PeerConnection
   static NAN_METHOD(GetReceivers);
   static NAN_METHOD(GetSenders);
   static NAN_METHOD(GetStats);
+  static NAN_METHOD(LegacyGetStats);
+  static NAN_METHOD(GetTransceivers);
   static NAN_METHOD(Close);
 
   static NAN_GETTER(GetCanTrickleIceCandidates);
@@ -106,17 +124,6 @@ class PeerConnection
   static NAN_GETTER(GetIceGatheringState);
   static NAN_SETTER(ReadOnly);
 
-  void HandleIceConnectionStateChangeEvent(const IceConnectionStateChangeEvent& event);
-  void HandleIceGatheringStateChangeEvent(const IceGatheringStateChangeEvent& event);
-  void HandleIceCandidateEvent(const IceEvent& event);
-  void HandleDataChannelEvent(const DataChannelEvent& event);
-  void HandleNegotiationNeededEvent(const NegotiationNeededEvent& event);
-  void HandleOnAddTrackEvent(const OnAddTrackEvent& event);
-  void HandleSignalingStateChangeEvent(const SignalingStateChangeEvent& event);
-
-  void SaveLastSdp(const RTCSessionDescriptionInit& lastSdp);
-
- private:
   RTCSessionDescriptionInit _lastSdp;
 
   UnsignedShortRange _port_range;
@@ -126,8 +133,7 @@ class PeerConnection
   std::shared_ptr<node_webrtc::PeerConnectionFactory> _factory;
   bool _shouldReleaseFactory;
 
-  std::vector<node_webrtc::RTCRtpReceiver*> _receivers;
-  std::vector<node_webrtc::RTCRtpSender*> _senders;
+  std::vector<node_webrtc::DataChannel*> _channels;
 };
 
 }  // namespace node_webrtc

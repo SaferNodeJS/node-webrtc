@@ -15,7 +15,8 @@ require('./closing-data-channel');
 require('./get-configuration');
 require('./rtcrtpreceiver');
 require('./send-arraybuffer');
+require('./rtcdatachannel');
 
-if (semver(process.version).major >= 9) {
+if (semver(process.version).major >= 9 && typeof gc === 'function') {
   require('./destructor');
 }

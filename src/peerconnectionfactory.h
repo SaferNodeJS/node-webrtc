@@ -8,16 +8,31 @@
 #ifndef SRC_PEERCONNECTIONFACTORY_H_
 #define SRC_PEERCONNECTIONFACTORY_H_
 
-#include "nan.h"
-#include "uv.h"
-#include "v8.h"  // IWYU pragma: keep
+#include <memory>
 
-#include "webrtc/base/scoped_ref_ptr.h"
-#include "webrtc/modules/audio_device/include/audio_device.h"
-#include "webrtc/pc/peerconnectionfactory.h"
+#include <nan.h>
+#include <uv.h>  // IWYU pragma: keep
+#include <webrtc/modules/audio_device/include/audio_device.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
+#include <v8.h>  // IWYU pragma: keep
 
-#include "src/functional/maybe.h"
-#include "src/webrtc/physicalsocketserver.h"
+#include "src/functional/maybe.h"  // IWYU pragma: keep
+
+// IWYU pragma: no_include <uv/unix.h>
+
+namespace rtc {
+
+class NetworkManager;
+class PacketSocketFactory;
+class Thread;  // IWYU pragma: keep
+
+}  // namespace rtc
+
+namespace webrtc {
+
+class PeerConnectionFactoryInterface;
+
+}  // namespace webrtc
 
 namespace node_webrtc {
 
@@ -56,21 +71,25 @@ class PeerConnectionFactory
   // Nodejs wrapping.
   //
   static void Init(v8::Handle<v8::Object> exports);
+
   static void Dispose();
-  static Nan::Persistent<v8::Function> constructor;
-  static NAN_METHOD(New);
+
+  std::unique_ptr<rtc::Thread> _signalingThread;
 
  private:
+  static Nan::Persistent<v8::Function>& constructor();
+
+  static NAN_METHOD(New);
+
   static std::shared_ptr<PeerConnectionFactory> _default;
   static uv_mutex_t _lock;
   static int _references;
 
-  std::unique_ptr<rtc::Thread> _signalingThread;
   std::unique_ptr<rtc::Thread> _workerThread;
   rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> _factory;
+  rtc::scoped_refptr<webrtc::AudioDeviceModule> _audioDeviceModule;
 
   std::unique_ptr<rtc::NetworkManager> _networkManager;
-  std::unique_ptr<node_webrtc::PhysicalSocketServer> _physicalSocketServer;
   std::unique_ptr<rtc::PacketSocketFactory> _socketFactory;
 };
 

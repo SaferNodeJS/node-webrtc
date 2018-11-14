@@ -7,16 +7,25 @@
  */
 #ifndef SRC_EVENTS_H_
 #define SRC_EVENTS_H_
+
+#include <iosfwd>
+
 #include <nan.h>
+#include <webrtc/api/datachannelinterface.h>
+#include <webrtc/api/jsep.h>
+#include <webrtc/api/peerconnectioninterface.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
 
-#include <memory>
+#include "src/converters/v8.h"
+#include "src/error.h"
+#include "src/functional/either.h"
 
-#include "converters.h"
-#include "converters/v8.h"
-#include "error.h"
-#include "functional/either.h"
-#include "functional/validation.h"
-#include "webrtc/api/peerconnectioninterface.h"
+namespace webrtc {
+
+class RtpReceiverInterface;
+class RtpTransceiverInterface;
+
+}  // namespace webrtc
 
 namespace node_webrtc {
 
@@ -62,10 +71,10 @@ class PromiseEvent: public Event<T> {
       auto resolver = Nan::New(*_resolver);
       _result.template FromEither<void>([resolver](L error) {
         CONVERT_OR_REJECT_AND_RETURN(resolver, error, value, v8::Local<v8::Value>);
-        resolver->Reject(value);
+        resolver->Reject(Nan::GetCurrentContext(), value).IsNothing();
       }, [resolver](R result) {
         CONVERT_OR_REJECT_AND_RETURN(resolver, result, value, v8::Local<v8::Value>);
-        resolver->Resolve(value);
+        resolver->Resolve(Nan::GetCurrentContext(), value).IsNothing();
       });
     }
   }
@@ -80,7 +89,7 @@ class PromiseEvent: public Event<T> {
 
   static std::pair<v8::Local<v8::Promise::Resolver>, std::unique_ptr<PromiseEvent<T, R, L>>> Create() {
     Nan::EscapableHandleScope scope;
-    auto resolver = v8::Promise::Resolver::New(Nan::GetCurrentContext()->GetIsolate());
+    auto resolver = v8::Promise::Resolver::New(Nan::GetCurrentContext()).ToLocalChecked();
     auto event = std::unique_ptr<PromiseEvent<T, R, L>>(new PromiseEvent<T, R, L>(
                 std::unique_ptr<Nan::Persistent<v8::Promise::Resolver>>(
                     new Nan::Persistent<v8::Promise::Resolver>(resolver))));
@@ -251,10 +260,16 @@ class DataChannelEvent: public Event<PeerConnection> {
 
 class OnAddTrackEvent: public Event<PeerConnection> {
  public:
+  rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver;
   rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver;
   const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>> streams;
 
   void Dispatch(PeerConnection& peerConnection) override;
+
+  static std::unique_ptr<OnAddTrackEvent> Create(
+      rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) {
+    return std::unique_ptr<OnAddTrackEvent>(new OnAddTrackEvent(transceiver));
+  }
 
   static std::unique_ptr<OnAddTrackEvent> Create(
       rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
@@ -263,7 +278,12 @@ class OnAddTrackEvent: public Event<PeerConnection> {
   }
 
  private:
-  explicit OnAddTrackEvent(
+  explicit OnAddTrackEvent(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver)
+    : transceiver(transceiver)
+    , receiver(transceiver->receiver())
+    , streams(transceiver->receiver()->streams()) {}
+
+  OnAddTrackEvent(
       rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver,
       const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams)
     : receiver(receiver)

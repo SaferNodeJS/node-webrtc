@@ -5,14 +5,17 @@
  * project authors may be found in the AUTHORS file in the root of the source
  * tree.
  */
-#include "mediastreamtrack.h"
+#include "src/mediastreamtrack.h"
 
-#include "webrtc/base/helpers.h"
+#include <webrtc/api/mediastreaminterface.h>  // IWYU pragma: keep
+#include <webrtc/rtc_base/location.h>
+#include <webrtc/rtc_base/scoped_ref_ptr.h>
 
-#include "converters/webrtc.h"
+#include "src/error.h"
+#include "src/converters/webrtc.h"  // IWYU pragma: keep
+#include "src/peerconnectionfactory.h"  // IWYU pragma: keep
 
 using node_webrtc::AsyncObjectWrapWithLoop;
-using node_webrtc::BidiMap;
 using node_webrtc::MediaStreamTrack;
 using node_webrtc::PeerConnectionFactory;
 using v8::External;
@@ -23,9 +26,10 @@ using v8::Local;
 using v8::Object;
 using v8::Value;
 
-Nan::Persistent<Function> MediaStreamTrack::constructor;
-
-BidiMap<rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>, MediaStreamTrack*> MediaStreamTrack::_tracks;
+Nan::Persistent<Function>& MediaStreamTrack::constructor() {
+  static Nan::Persistent<Function> constructor;
+  return constructor;
+}
 
 MediaStreamTrack::MediaStreamTrack(
     std::shared_ptr<node_webrtc::PeerConnectionFactory>&& factory,
@@ -38,7 +42,7 @@ MediaStreamTrack::MediaStreamTrack(
 
 MediaStreamTrack::~MediaStreamTrack() {
   _track->UnregisterObserver(this);
-  MediaStreamTrack::Release(this);
+  wrap()->Release(this);
 }
 
 NAN_METHOD(MediaStreamTrack::New) {
@@ -59,6 +63,10 @@ void MediaStreamTrack::OnChanged() {
   if (this->_track->state() == webrtc::MediaStreamTrackInterface::TrackState::kEnded) {
     Stop();
   }
+}
+
+void MediaStreamTrack::OnPeerConnectionClosed() {
+  Stop();
 }
 
 NAN_GETTER(MediaStreamTrack::GetEnabled) {
@@ -82,8 +90,31 @@ NAN_GETTER(MediaStreamTrack::GetKind) {
 NAN_GETTER(MediaStreamTrack::GetReadyState) {
   (void) property;
   auto self = AsyncObjectWrapWithLoop<MediaStreamTrack>::Unwrap(info.Holder());
-  CONVERT_OR_THROW_AND_RETURN(self->_track->state(), result, std::string);
+  auto state = self->_ended
+      ? webrtc::MediaStreamTrackInterface::TrackState::kEnded
+      : self->_track->state();
+  CONVERT_OR_THROW_AND_RETURN(state, result, std::string);
   info.GetReturnValue().Set(Nan::New(result).ToLocalChecked());
+}
+
+NAN_GETTER(MediaStreamTrack::GetMuted) {
+  (void) property;
+  auto self = AsyncObjectWrapWithLoop<MediaStreamTrack>::Unwrap(info.Holder());
+  auto track = self->track();
+  webrtc::MediaSourceInterface* source = nullptr;
+  if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
+    auto audioTrack = static_cast<webrtc::AudioTrackInterface*>(track.get());
+    source = audioTrack->GetSource();
+  } else if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
+    auto videoTrack = static_cast<webrtc::AudioTrackInterface*>(track.get());
+    source = videoTrack->GetSource();
+  }
+  auto muted = source && self->factory()->_signalingThread->Invoke<bool>(RTC_FROM_HERE, [source]() {
+    // NOTE(mroberts): I got a EXC_I386_GPFLT here...
+    // return source->state() == webrtc::MediaSourceInterface::kMuted;
+    return false;
+  });
+  info.GetReturnValue().Set(muted);
 }
 
 NAN_METHOD(MediaStreamTrack::Clone) {
@@ -97,8 +128,10 @@ NAN_METHOD(MediaStreamTrack::Clone) {
     auto videoTrack = static_cast<webrtc::VideoTrackInterface*>(self->_track.get());
     clonedTrack = self->_factory->factory()->CreateVideoTrack(label, videoTrack->GetSource());
   }
-  auto clonedMediaStreamTrack = MediaStreamTrack::GetOrCreate(self->_factory, clonedTrack);
-  if (self->_track->state() != webrtc::MediaStreamTrackInterface::TrackState::kLive) {
+  auto clonedMediaStreamTrack = wrap()->GetOrCreate(self->_factory, clonedTrack);
+  if (self->_ended) {
+    // NOTE(mroberts): There ought to be a more principled way of doing this; also, we aren't considering the source.
+    clonedMediaStreamTrack->_ended = true;
     clonedMediaStreamTrack->Stop();
   }
   info.GetReturnValue().Set(clonedMediaStreamTrack->ToObject());
@@ -106,24 +139,32 @@ NAN_METHOD(MediaStreamTrack::Clone) {
 
 NAN_METHOD(MediaStreamTrack::JsStop) {
   auto self = AsyncObjectWrapWithLoop<MediaStreamTrack>::Unwrap(info.Holder());
+  self->_ended = true;
   self->Stop();
 }
 
-MediaStreamTrack* MediaStreamTrack::GetOrCreate(
-    std::shared_ptr<PeerConnectionFactory> factory,
-    rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) {
-  return _tracks.computeIfAbsent(track, [&factory, &track]() {
-    Nan::HandleScope scope;
-    Local<Value> cargv[2];
-    cargv[0] = Nan::New<External>(static_cast<void*>(&factory));
-    cargv[1] = Nan::New<External>(static_cast<void*>(&track));
-    auto mediaStreamTrack = Nan::NewInstance(Nan::New(MediaStreamTrack::constructor), 2, cargv).ToLocalChecked();
-    return AsyncObjectWrapWithLoop<MediaStreamTrack>::Unwrap(mediaStreamTrack);
-  });
+node_webrtc::Wrap <
+MediaStreamTrack*,
+rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>,
+std::shared_ptr<PeerConnectionFactory>
+> * MediaStreamTrack::wrap() {
+  static auto wrap = new node_webrtc::Wrap <
+  MediaStreamTrack*,
+  rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>,
+  std::shared_ptr<PeerConnectionFactory>
+  > (MediaStreamTrack::Create);
+  return wrap;
 }
 
-void MediaStreamTrack::Release(MediaStreamTrack* track) {
-  _tracks.reverseRemove(track);
+MediaStreamTrack* MediaStreamTrack::Create(
+    std::shared_ptr<PeerConnectionFactory> factory,
+    rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track) {
+  Nan::HandleScope scope;
+  Local<Value> cargv[2];
+  cargv[0] = Nan::New<External>(static_cast<void*>(&factory));
+  cargv[1] = Nan::New<External>(static_cast<void*>(&track));
+  auto mediaStreamTrack = Nan::NewInstance(Nan::New(MediaStreamTrack::constructor()), 2, cargv).ToLocalChecked();
+  return AsyncObjectWrapWithLoop<MediaStreamTrack>::Unwrap(mediaStreamTrack);
 }
 
 void MediaStreamTrack::Init(Handle<Object> exports) {
@@ -134,8 +175,9 @@ void MediaStreamTrack::Init(Handle<Object> exports) {
   Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("id").ToLocalChecked(), GetId, nullptr);
   Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("kind").ToLocalChecked(), GetKind, nullptr);
   Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("readyState").ToLocalChecked(), GetReadyState, nullptr);
+  Nan::SetAccessor(tpl->InstanceTemplate(), Nan::New("muted").ToLocalChecked(), GetMuted, nullptr);
   Nan::SetPrototypeMethod(tpl, "clone", Clone);
   Nan::SetPrototypeMethod(tpl, "stop", JsStop);
-  constructor.Reset(tpl->GetFunction());
+  constructor().Reset(tpl->GetFunction());
   exports->Set(Nan::New("MediaStreamTrack").ToLocalChecked(), tpl->GetFunction());
 }

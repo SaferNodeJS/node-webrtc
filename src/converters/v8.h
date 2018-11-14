@@ -13,9 +13,11 @@
 #ifndef SRC_CONVERTERS_V8_H_
 #define SRC_CONVERTERS_V8_H_
 
-#include "nan.h"
+#include <nan.h>
 
 #include "src/converters.h"
+#include "src/errorfactory.h"
+#include "src/functional/either.h"
 #include "src/functional/validation.h"
 
 namespace node_webrtc {
@@ -26,22 +28,54 @@ class SomeError {
  public:
   SomeError() {}
 
-  explicit SomeError(const std::string& message): _message(message) {}
+  explicit SomeError(const std::string& message)
+    : SomeError(message, Either<ErrorFactory::DOMExceptionName, ErrorFactory::ErrorName>::Right(ErrorFactory::kError)) {}
+
+  SomeError(const std::string& message, const Either<ErrorFactory::DOMExceptionName, ErrorFactory::ErrorName> name)
+    : _message(message), _name(name) {}
 
   std::string message() const {
     return _message;
   }
 
+  Either<ErrorFactory::DOMExceptionName, ErrorFactory::ErrorName> name() const {
+    return _name;
+  }
+
  private:
   std::string _message;
+  Either<ErrorFactory::DOMExceptionName, ErrorFactory::ErrorName> _name;
 };
 
 template <>
 struct Converter<SomeError, v8::Local<v8::Value>> {
   static Validation<v8::Local<v8::Value>> Convert(const SomeError someError) {
     Nan::EscapableHandleScope scope;
-    auto error = static_cast<v8::Local<v8::Value>>(Nan::Error(Nan::New(someError.message()).ToLocalChecked()));
-    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(error));
+    auto message = someError.message();
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(someError.name().FromEither<v8::Local<v8::Value>>(
+    [message](ErrorFactory::DOMExceptionName name) {
+      switch (name) {
+        case ErrorFactory::DOMExceptionName::kInvalidAccessError:
+          return ErrorFactory::CreateInvalidAccessError(message);
+        case ErrorFactory::DOMExceptionName::kInvalidModificationError:
+          return ErrorFactory::CreateInvalidModificationError(message);
+        case ErrorFactory::DOMExceptionName::kInvalidStateError:
+          return ErrorFactory::CreateInvalidStateError(message);
+        case ErrorFactory::DOMExceptionName::kNetworkError:
+          return ErrorFactory::CreateNetworkError(message);
+        case ErrorFactory::DOMExceptionName::kOperationError:
+          return ErrorFactory::CreateOperationError(message);
+      }
+    }, [message](ErrorFactory::ErrorName name) {
+      switch (name) {
+        case ErrorFactory::ErrorName::kError:
+          return ErrorFactory::CreateError(message);
+        case ErrorFactory::ErrorName::kRangeError:
+          return ErrorFactory::CreateRangeError(message);
+        case ErrorFactory::ErrorName::kSyntaxError:
+          return ErrorFactory::CreateSyntaxError(message);
+      }
+    })));
   }
 };
 
@@ -96,6 +130,16 @@ struct Converter<v8::Local<v8::Value>, bool> {
 };
 
 template <>
+struct Converter<bool, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const bool value) {
+    Nan::EscapableHandleScope scope;
+    return value
+        ? Validation<v8::Local<v8::Value>>::Valid(scope.Escape(v8::Local<v8::Value>::Cast(Nan::True())))
+        : Validation<v8::Local<v8::Value>>::Valid(scope.Escape(v8::Local<v8::Value>::Cast(Nan::False())));
+  }
+};
+
+template <>
 struct Converter<v8::Local<v8::Value>, uint8_t> {
   static Validation<uint8_t> Convert(const v8::Local<v8::Value> value) {
     auto maybeInt32 = Nan::To<v8::Int32>(value);
@@ -140,6 +184,14 @@ struct Converter<v8::Local<v8::Value>, int32_t> {
 };
 
 template <>
+struct Converter<int32_t, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const int32_t value) {
+    Nan::EscapableHandleScope scope;
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(Nan::New(value)));
+  }
+};
+
+template <>
 struct Converter<v8::Local<v8::Value>, int64_t> {
   static Validation<int64_t> Convert(const v8::Local<v8::Value> value) {
     auto maybeInteger = Nan::To<v8::Integer>(value);
@@ -152,6 +204,15 @@ struct Converter<v8::Local<v8::Value>, int64_t> {
 };
 
 template <>
+struct Converter<int64_t, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const int64_t value) {
+    Nan::EscapableHandleScope scope;
+    // NOTE(mroberts): Is this correct?
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(Nan::New(static_cast<double>(value))));
+  }
+};
+
+template <>
 struct Converter<v8::Local<v8::Value>, double> {
   static Validation<double> Convert(const v8::Local<v8::Value> value) {
     auto maybeNumber = Nan::To<v8::Number>(value);
@@ -160,6 +221,14 @@ struct Converter<v8::Local<v8::Value>, double> {
     }
     auto number = (*maybeNumber.ToLocalChecked())->Value();
     return Validation<double>::Valid(number);
+  }
+};
+
+template <>
+struct Converter<double, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const double value) {
+    Nan::EscapableHandleScope scope;
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(Nan::New(value)));
   }
 };
 
@@ -183,6 +252,17 @@ struct Converter<std::string, v8::Local<v8::Value>> {
   }
 };
 
+template <>
+struct Converter<v8::Local<v8::Value>, v8::Local<v8::Function>> {
+  static Validation<v8::Local<v8::Function>> Convert(const v8::Local<v8::Value> value) {
+    if (!value->IsFunction()) {
+      return Validation<v8::Local<v8::Function>>::Invalid("Expected a function");
+    }
+    auto function = v8::Local<v8::Function>::Cast(value);
+    return Validation<v8::Local<v8::Function>>::Valid(function);
+  }
+};
+
 template <typename T>
 struct Converter<v8::Local<v8::Value>, std::vector<T>> {
   static Validation<std::vector<T>> Convert(const v8::Local<v8::Value> value) {
@@ -195,6 +275,23 @@ struct Converter<v8::Local<v8::Value>, std::vector<T>> {
       validated.push_back(From<T>(array->Get(i)));
     }
     return Validation<T>::Sequence(validated);
+  }
+};
+
+template <>
+struct Converter<std::vector<bool>, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const std::vector<bool>& values) {
+    Nan::EscapableHandleScope scope;
+    auto array = Nan::New<v8::Array>();
+    uint32_t i = 0;
+    for (bool value : values) {
+      auto maybeValue = From<v8::Local<v8::Value>>(value);
+      if (maybeValue.IsInvalid()) {
+        return Validation<v8::Local<v8::Value>>::Invalid(maybeValue.ToErrors());
+      }
+      array->Set(i++, maybeValue.UnsafeFromValid());
+    }
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(array));
   }
 };
 
@@ -224,6 +321,23 @@ struct Converter<v8::Local<v8::Value>, uint32_t> {
     }
     auto uint32 = (*maybeUint32.ToLocalChecked())->Value();
     return Validation<uint32_t>::Valid(uint32);
+  }
+};
+
+template <>
+struct Converter<uint32_t, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const uint32_t value) {
+    Nan::EscapableHandleScope scope;
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(Nan::New(value)));
+  }
+};
+
+template <>
+struct Converter<uint64_t, v8::Local<v8::Value>> {
+  static Validation<v8::Local<v8::Value>> Convert(const uint64_t value) {
+    Nan::EscapableHandleScope scope;
+    // NOTE(mroberts): Is this correct?
+    return Validation<v8::Local<v8::Value>>::Valid(scope.Escape(Nan::New(static_cast<double>(value))));
   }
 };
 

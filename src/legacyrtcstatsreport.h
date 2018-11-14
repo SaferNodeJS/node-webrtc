@@ -8,25 +8,32 @@
 #ifndef SRC_RTCSTATSREPORT_H_
 #define SRC_RTCSTATSREPORT_H_
 
-#include "nan.h"
-#include "v8.h"  // IWYU pragma: keep
-
-#include "webrtc/api/statstypes.h"  // IWYU pragma: keep
+#include <nan.h>
+#include <webrtc/api/statstypes.h>  // IWYU pragma: keep
+#include <v8.h>  // IWYU pragma: keep
 
 namespace node_webrtc {
 
-class RTCStatsReport
+class LegacyStatsReport
   : public Nan::ObjectWrap {
  public:
-  explicit RTCStatsReport(double timestamp, const std::map<std::string, std::string>& stats)
-    : _timestamp(timestamp), _stats(stats) {}
-  ~RTCStatsReport() {}
+  LegacyStatsReport() = delete;
+
+  ~LegacyStatsReport() override = default;
 
   //
   // Nodejs wrapping.
   //
   static void Init(v8::Handle<v8::Object> exports);
-  static Nan::Persistent<v8::Function> constructor;
+
+  static LegacyStatsReport* Create(double timestamp, const std::map<std::string, std::string>& stats);
+
+ private:
+  explicit LegacyStatsReport(double timestamp, const std::map<std::string, std::string>& stats)
+    : _timestamp(timestamp), _stats(stats) {}
+
+  static Nan::Persistent<v8::Function>& constructor();
+
   static NAN_METHOD(New);
 
   static NAN_METHOD(names);
@@ -37,7 +44,6 @@ class RTCStatsReport
 
   static NAN_SETTER(ReadOnly);
 
- private:
   double _timestamp;
   std::map<std::string, std::string> _stats;
 };
